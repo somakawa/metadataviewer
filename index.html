@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Metadata Viewer</title>
+  <!-- ExifReader を指定のCDNから読み込み -->
+  <script src="https://cdn.jsdelivr.net/npm/exifreader@4.27.0/dist/exif-reader.min.js"></script>
+  <style>
+    body {
+      background-color: #000;
+      color: #fff;
+      font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+      margin: 0;
+      padding: 50px 20px;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+    }
+
+    .container {
+      max-width: 800px;
+      width: 100%;
+      background: #111;
+      padding: 30px;
+      border-radius: 10px;
+      box-shadow: 0 0 15px rgba(255, 255, 255, 0.1);
+      text-align: center;
+    }
+
+    #languageSelectorContainer {
+      text-align: right;
+      margin-bottom: 10px;
+    }
+
+    h1 {
+      margin-bottom: 10px;
+    }
+
+    #description {
+      margin-bottom: 20px;
+      color: #ccc;
+    }
+
+    img#preview {
+      margin: auto;
+    }
+
+    #preview {
+      max-width: 100%;
+      max-height: 300px;
+      border: 1px solid #444;
+      border-radius: 5px;
+      display: none;
+    }
+
+    #fileInputLabel {
+      display: block;
+      margin-bottom: 10px;
+    }
+
+    input[type="file"] {
+      background: #222;
+      border: 1px solid #444;
+      color: #fff;
+      padding: 10px 15px;
+      border-radius: 5px;
+      cursor: pointer;
+      margin-bottom: 20px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 20px;
+    }
+
+    th,
+    td {
+      border: 1px solid #444;
+      padding: 8px;
+      text-align: left;
+    }
+
+    th {
+      background-color: #222;
+    }
+
+    tr:nth-child(even) {
+      background-color: #1a1a1a;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="container">
+    <!-- 言語選択 -->
+    <div id="languageSelectorContainer">
+      <select id="languageSelector">
+        <option value="en">English</option>
+        <option value="ja" selected>日本語</option>
+      </select>
+    </div>
+    <h1 id="pageTitle">Metadata Viewer</h1>
+    <p id="description">画像を選択すると、画像プレビューとExifを含む全てのメタデータが表示されます</p>
+
+    <!-- 画像プレビューエリア -->
+    <div id="previewContainer">
+      <img id="preview" src="" alt="画像プレビュー">
+    </div>
+
+    <label id="fileInputLabel" for="imageInput">ファイルを選択</label>
+    <input type="file" id="imageInput" accept="image/*">
+    <div id="output">
+      <div id="metadata"></div>
+    </div>
+  </div>
+
+  <script>
+    // 言語別テキストの定義
+    const langStrings = {
+      en: {
+        title: "Metadata Viewer",
+        description: "Select an image to display a preview and all metadata including EXIF.",
+        fileInputLabel: "Choose file",
+        noMetadata: "No metadata found.",
+        errorLoading: "An error occurred while loading metadata: ",
+        libraryNotLoaded: "ExifReader library is not loaded. Please check your network connection or URL.",
+        tableHeaders: {
+          category: "Category",
+          tag: "Tag",
+          value: "Value"
+        },
+        previewAlt: "Image Preview"
+      },
+      ja: {
+        title: "メタデータビューワー",
+        description: "画像を選択すると、画像プレビューとExifを含む全てのメタデータが表示されます",
+        fileInputLabel: "ファイルを選択",
+        noMetadata: "メタデータが見つかりませんでした。",
+        errorLoading: "メタデータの読み込み中にエラーが発生しました: ",
+        libraryNotLoaded: "ExifReaderライブラリが読み込まれていません。ネットワーク接続やURLを確認してください。",
+        tableHeaders: {
+          category: "カテゴリ",
+          tag: "タグ",
+          value: "値"
+        },
+        previewAlt: "画像プレビュー"
+      }
+    };
+
+    // UIテキスト更新用関数
+    function updateLanguageUI() {
+      const currentLang = document.getElementById('languageSelector').value;
+      document.getElementById('pageTitle').textContent = langStrings[currentLang].title;
+      document.getElementById('description').textContent = langStrings[currentLang].description;
+      document.getElementById('fileInputLabel').textContent = langStrings[currentLang].fileInputLabel;
+      document.getElementById('preview').alt = langStrings[currentLang].previewAlt;
+
+      // 既に生成されたメタデータテーブルのヘッダー更新
+      const tableHeaderRow = document.querySelector("#metadata table thead tr");
+      if (tableHeaderRow) {
+        tableHeaderRow.cells[0].textContent = langStrings[currentLang].tableHeaders.category;
+        tableHeaderRow.cells[1].textContent = langStrings[currentLang].tableHeaders.tag;
+        tableHeaderRow.cells[2].textContent = langStrings[currentLang].tableHeaders.value;
+      }
+    }
+
+    document.addEventListener('DOMContentLoaded', function () {
+      // 初期表示の言語設定
+      updateLanguageUI();
+
+      // 言語選択変更時にUI更新
+      document.getElementById('languageSelector').addEventListener('change', updateLanguageUI);
+
+      const currentLang = document.getElementById('languageSelector').value;
+      // ExifReaderライブラリが読み込まれているか確認
+      if (typeof ExifReader === 'undefined') {
+        document.getElementById('metadata').textContent = langStrings[currentLang].libraryNotLoaded;
+        return;
+      }
+
+      document.getElementById('imageInput').addEventListener('change', function (e) {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        // 通常の画像プレビュー（ブラウザ対応形式の場合）
+        const previewReader = new FileReader();
+        previewReader.onload = function (event) {
+          const previewImg = document.getElementById('preview');
+          previewImg.src = event.target.result;
+          previewImg.style.display = 'block';
+        };
+        previewReader.readAsDataURL(file);
+
+        // メタデータ読み込みとRAW画像の埋め込みプレビュー抽出用
+        const metadataReader = new FileReader();
+        metadataReader.onload = function (event) {
+          const arrayBuffer = event.target.result;
+          const currentLang = document.getElementById('languageSelector').value;
+          try {
+            // expandedオプションでカテゴリ別に全メタデータを取得
+            const tags = ExifReader.load(arrayBuffer, { expanded: true });
+
+            // もしRAW画像などブラウザで直接表示できない場合は、埋め込みプレビューがあればそちらを利用
+            let previewData = null;
+            if (tags["Thumbnail"] && tags["Thumbnail"].value) {
+              previewData = tags["Thumbnail"].value;
+            } else if (tags["PreviewImage"] && tags["PreviewImage"].value) {
+              previewData = tags["PreviewImage"].value;
+            }
+            if (previewData) {
+              const blob = new Blob([previewData], { type: "image/jpeg" });
+              const url = URL.createObjectURL(blob);
+              const previewImg = document.getElementById('preview');
+              previewImg.src = url;
+              previewImg.style.display = 'block';
+            }
+
+            const metadataDiv = document.getElementById('metadata');
+            metadataDiv.innerHTML = ''; // 前回の内容をクリア
+
+            // メタデータが存在するかチェック
+            let hasData = false;
+            for (const category in tags) {
+              if (tags.hasOwnProperty(category) && Object.keys(tags[category]).length > 0) {
+                hasData = true;
+                break;
+              }
+            }
+            if (!hasData) {
+              metadataDiv.innerHTML = '<p>' + langStrings[currentLang].noMetadata + '</p>';
+              return;
+            }
+
+            // カテゴリ／タグ／値の3列テーブル作成
+            const table = document.createElement('table');
+            const thead = document.createElement('thead');
+            const headerRow = document.createElement('tr');
+
+            const thCat = document.createElement('th');
+            thCat.textContent = langStrings[currentLang].tableHeaders.category;
+            headerRow.appendChild(thCat);
+
+            const thTag = document.createElement('th');
+            thTag.textContent = langStrings[currentLang].tableHeaders.tag;
+            headerRow.appendChild(thTag);
+
+            const thVal = document.createElement('th');
+            thVal.textContent = langStrings[currentLang].tableHeaders.value;
+            headerRow.appendChild(thVal);
+
+            thead.appendChild(headerRow);
+            table.appendChild(thead);
+
+            const tbody = document.createElement('tbody');
+            for (const category in tags) {
+              if (tags.hasOwnProperty(category)) {
+                const categoryData = tags[category];
+                for (const tag in categoryData) {
+                  if (categoryData.hasOwnProperty(tag)) {
+                    const row = document.createElement('tr');
+
+                    // カテゴリ
+                    const cellCategory = document.createElement('td');
+                    cellCategory.textContent = category;
+                    row.appendChild(cellCategory);
+
+                    // タグ
+                    const cellTag = document.createElement('td');
+                    cellTag.textContent = tag;
+                    row.appendChild(cellTag);
+
+                    // 値（descriptionがあれば優先）
+                    const cellValue = document.createElement('td');
+                    let value = categoryData[tag].description || categoryData[tag].value;
+                    if (typeof value === 'object') {
+                      try {
+                        value = JSON.stringify(value);
+                      } catch (e) {
+                        value = String(value);
+                      }
+                    }
+                    cellValue.textContent = value;
+                    row.appendChild(cellValue);
+
+                    tbody.appendChild(row);
+                  }
+                }
+              }
+            }
+            table.appendChild(tbody);
+            metadataDiv.appendChild(table);
+
+            // --- 以下、メタデータ内に含まれる画像（サムネイル等）を表示する処理 ---
+            const imagesDiv = document.createElement('div');
+            imagesDiv.id = 'metadataImages';
+            imagesDiv.style.marginTop = "20px";
+            // 表示対象のキーを定義（必要に応じて追加可能）
+            const imageKeys = ["Thumbnail", "PreviewImage", "JpgFromRaw"];
+            imageKeys.forEach(key => {
+              if (tags[key] && tags[key].value) {
+                let imageData = tags[key].value;
+                // タイプがTypedArrayの場合、bufferを使用
+                if (!(imageData instanceof ArrayBuffer) && imageData.buffer instanceof ArrayBuffer) {
+                  imageData = imageData.buffer;
+                }
+                const blob = new Blob([imageData], { type: "image/jpeg" });
+                const url = URL.createObjectURL(blob);
+                const img = document.createElement('img');
+                img.src = url;
+                img.alt = key;
+                img.style.maxWidth = "100%";
+                img.style.display = "block";
+                img.style.margin = "10px auto";
+                // キャプションを付加
+                const caption = document.createElement('p');
+                caption.textContent = key;
+                caption.style.color = "#ccc";
+                caption.style.margin = "5px 0";
+                imagesDiv.appendChild(caption);
+                imagesDiv.appendChild(img);
+              }
+            });
+            // 画像が1枚でも存在すれば追加
+            if (imagesDiv.children.length > 0) {
+              metadataDiv.appendChild(imagesDiv);
+            }
+          } catch (error) {
+            document.getElementById('metadata').textContent =
+              langStrings[currentLang].errorLoading + error;
+          }
+        };
+        metadataReader.readAsArrayBuffer(file);
+      });
+    });
+  </script>
+</body>
+
+</html>
